@@ -123,8 +123,8 @@ elapsed time in the summary line.
 
 The rule for a match in the cache is that the run involves the same
 test binary and the flags on the command line come entirely from a
-restricted set of 'cacheable' test flags, defined as -benchtime, -cpu,
--list, -parallel, -run, -short, -timeout, -failfast, and -v.
+restricted set of 'cacheable' test flags, defined as -benchtime, -coverprofile,
+-cpu, -list, -parallel, -run, -short, -timeout, -failfast, and -v.
 If a run of go test has any test or non-test flags outside this set,
 the result is not cached. To disable test caching, use any test flag
 or argument other than the cacheable flags. The idiomatic way to disable
@@ -1500,6 +1500,7 @@ func (c *runCache) tryCacheWithID(b *work.Builder, a *work.Action, id string) bo
 		}
 		switch arg[:i] {
 		case "-test.benchtime",
+			"-test.coverprofile",
 			"-test.cpu",
 			"-test.list",
 			"-test.parallel",
@@ -1602,6 +1603,7 @@ func (c *runCache) tryCacheWithID(b *work.Builder, a *work.Action, id string) bo
 		}
 		return false
 	}
+
 	if entry.Time.Before(testCacheExpire) {
 		if cache.DebugTest {
 			fmt.Fprintf(os.Stderr, "testcache: %s: test output expired due to go clean -testcache\n", a.Package.ImportPath)
@@ -1623,6 +1625,25 @@ func (c *runCache) tryCacheWithID(b *work.Builder, a *work.Action, id string) bo
 		return false
 	}
 	j += i + len("ok  \t") + 1
+
+	if testCoverProfile != "" {
+		coverdata, _, err := cache.Default().GetBytes(testAndCoverageKey(testID))
+		if err != nil {
+			if cache.DebugTest {
+				fmt.Fprintf(os.Stderr, "testcache: %s: cover profile not found: %v\n", a.Package.ImportPath, err)
+			}
+			return false
+		}
+		if cache.DebugTest {
+			fmt.Fprintf(os.Stderr, "got cover profile with len %d, writing to %s\n", len(coverdata), a.Objdir+"_cover_.out")
+		}
+		if err := os.WriteFile(testCoverProfile, coverdata, 0666); err != nil {
+			if cache.DebugTest {
+				fmt.Fprintf(os.Stderr, "testcache: %s: error writing coverage profile: %v\n", a.Package.ImportPath, err)
+			}
+			return false
+		}
+	}
 
 	// Committed to printing.
 	c.buf = new(bytes.Buffer)
@@ -1780,6 +1801,35 @@ func testAndInputKey(testID, testInputsID cache.ActionID) cache.ActionID {
 	return cache.Subkey(testID, fmt.Sprintf("inputs:%x", testInputsID))
 }
 
+func testAndCoverageKey(testID cache.ActionID) cache.ActionID {
+	// TODO: include covermode and coverpkg in key, and maybe test.run?
+	return cache.Subkey(testID, "coverprofile")
+}
+
+func coverProfile(a *work.Action) ([]byte, error) {
+	if testCoverProfile == "" {
+		if cache.DebugTest {
+			fmt.Fprintf(os.Stderr, "no cover profile\n")
+		}
+		return nil, nil
+	}
+	file := a.Objdir + "_cover_.out"
+	expect := []byte(fmt.Sprintf("mode: %s\n", testCoverMode))
+	r, err := os.ReadFile(file)
+	fmt.Fprintf(os.Stderr, "reading cover profile at %s. size: %d, err: %v\n", file, len(r), err)
+	if err != nil {
+		// Test did not create profile, which is OK.
+		return nil, nil
+	}
+	if !bytes.HasPrefix(r, expect) {
+		if cache.DebugTest {
+			fmt.Fprint(os.Stderr, "bad prefix got! %q\n", string(r))
+		}
+		return nil, errors.New("test wrote malformed coverage profile")
+	}
+	return r, nil
+}
+
 func (c *runCache) saveOutput(a *work.Action) {
 	if c.id1 == (cache.ActionID{}) && c.id2 == (cache.ActionID{}) {
 		return
@@ -1797,6 +1847,15 @@ func (c *runCache) saveOutput(a *work.Action) {
 		}
 		return
 	}
+
+	cover, err := coverProfile(a)
+	if err != nil {
+		if cache.DebugTest {
+			fmt.Fprintf(os.Stderr, "testcache: %s: reading coverprofile: %v\n", a.Package.ImportPath, err)
+		}
+		return
+	}
+
 	testInputsID, err := computeTestInputsID(a, testlog)
 	if err != nil {
 		return
@@ -1807,6 +1866,7 @@ func (c *runCache) saveOutput(a *work.Action) {
 		}
 		cache.Default().PutNoVerify(c.id1, bytes.NewReader(testlog))
 		cache.Default().PutNoVerify(testAndInputKey(c.id1, testInputsID), bytes.NewReader(a.TestOutput.Bytes()))
+		cache.Default().PutNoVerify(testAndCoverageKey(c.id1), bytes.NewReader(cover))
 	}
 	if c.id2 != (cache.ActionID{}) {
 		if cache.DebugTest {
@@ -1814,6 +1874,7 @@ func (c *runCache) saveOutput(a *work.Action) {
 		}
 		cache.Default().PutNoVerify(c.id2, bytes.NewReader(testlog))
 		cache.Default().PutNoVerify(testAndInputKey(c.id2, testInputsID), bytes.NewReader(a.TestOutput.Bytes()))
+		cache.Default().PutNoVerify(testAndCoverageKey(c.id2), bytes.NewReader(cover))
 	}
 }
 

@@ -6258,7 +6258,7 @@ func (rws *http2responseWriterState) writeChunk(p []byte) (n int, err error) {
 // or known before the header is written, the normal Go trailers mechanism
 // is preferred:
 //    https://golang.org/pkg/net/http/#ResponseWriter
-//    https://golang.org/pkg/net/http/#example_ResponseWriter_trailers
+//    https://golang.org/pkg/net/http/#example-ResponseWriter-Trailers
 const http2TrailerPrefix = "Trailer:"
 
 // promoteUndeclaredTrailers permits http.Handlers to set trailers

@@ -1,6 +1,7 @@
 pkg archive/tar, method (*Writer) AddFS(fs.FS) error #58000
 pkg archive/zip, method (*Writer) AddFS(fs.FS) error #54898
 pkg cmp, func Or[$0 comparable](...$0) $0 #60204
+pkg context, func SetOnCancel(func(Context)) #56661
 pkg crypto/x509, func OIDFromInts([]uint64) (OID, error) #60665
 pkg crypto/x509, method (*CertPool) AddCertWithConstraint(*Certificate, func([]*Certificate) error) #57178
 pkg crypto/x509, method (OID) Equal(OID) bool #60665

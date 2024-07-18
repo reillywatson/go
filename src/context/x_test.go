@@ -5,6 +5,7 @@
 package context_test
 
 import (
+	"context"
 	. "context"
 	"errors"
 	"fmt"
@@ -1073,5 +1074,21 @@ func TestAfterFuncCalledAsynchronously(t *testing.T) {
 	case <-donec:
 	case <-time.After(veryLongDuration):
 		t.Fatalf("AfterFunc not called after context is canceled")
+	}
+}
+
+func TestOnCancel(t *testing.T) {
+	cancelCtx, cancel := WithCancel(Background())
+	called := false
+	SetOnCancel(func(ctx context.Context) {
+		called = true
+		if cancelCtx != ctx {
+			t.Errorf("got unexpected context %v", ctx)
+		}
+	})
+	t.Cleanup(func() { SetOnCancel(nil) })
+	cancel()
+	if !called {
+		t.Fatal("Expected OnCancel to be called after cancelling")
 	}
 }

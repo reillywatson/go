@@ -530,6 +530,11 @@ func (c *cancelCtx) String() string {
 	return contextName(c.Context) + ".WithCancel"
 }
 
+var cancelCallback func(Context)
+
+// SetOnCancel sets a function that gets called when Contexts are cancelled.
+func SetOnCancel(f func(Context)) { cancelCallback = f }
+
 // cancel closes c.done, cancels each of c's children, and, if
 // removeFromParent is true, removes c from its parent's children.
 // cancel sets c.cause to cause if this is the first time c is canceled.
@@ -544,6 +549,9 @@ func (c *cancelCtx) cancel(removeFromParent bool, err, cause error) {
 	if c.err != nil {
 		c.mu.Unlock()
 		return // already canceled
+	}
+	if cancelCallback != nil {
+		cancelCallback(c)
 	}
 	c.err = err
 	c.cause = cause

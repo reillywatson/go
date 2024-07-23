@@ -550,9 +550,6 @@ func (c *cancelCtx) cancel(removeFromParent bool, err, cause error) {
 		c.mu.Unlock()
 		return // already canceled
 	}
-	if cancelCallback != nil {
-		cancelCallback(c)
-	}
 	c.err = err
 	c.cause = cause
 	d, _ := c.done.Load().(chan struct{})
@@ -567,6 +564,9 @@ func (c *cancelCtx) cancel(removeFromParent bool, err, cause error) {
 	}
 	c.children = nil
 	c.mu.Unlock()
+	if cancelCallback != nil {
+		cancelCallback(c)
+	}
 
 	if removeFromParent {
 		removeChild(c.Context, c)

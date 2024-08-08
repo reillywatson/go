@@ -55,10 +55,8 @@ package context
 
 import (
 	"errors"
-	"fmt"
 	"internal/reflectlite"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -531,12 +529,33 @@ func (c *cancelCtx) callerString() string {
 	if c.callers == nil {
 		return ""
 	}
-	var b strings.Builder
+	var b string
 	frames := runtime.CallersFrames(c.callers)
 	for f, ok := frames.Next(); ok; f, ok = frames.Next() {
-		fmt.Fprintf(&b, "%s:%d %s\n", f.File, f.Line, f.Function)
+		b = b + f.File + ":" + itoa(f.Line) + " " + f.Function + "\n"
 	}
-	return b.String()
+	return b
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+
+	sign := ""
+	if n < 0 {
+		sign = "-"
+		n = -n
+	}
+
+	q := ""
+	for n > 0 {
+		digits := n % 10
+		q = string(rune('0'+digits)) + q
+		n /= 10
+	}
+
+	return sign + q
 }
 
 // Canceler returns a string describing the caller that canceled this context.

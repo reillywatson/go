@@ -55,7 +55,10 @@ package context
 
 import (
 	"errors"
+	"fmt"
 	"internal/reflectlite"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -269,8 +272,15 @@ func withCancel(parent Context) *cancelCtx {
 	if parent == nil {
 		panic("cannot create context from nil parent")
 	}
-	c := &cancelCtx{}
+	c := newCancelCtx(parent)
 	c.propagateCancel(parent, c)
+	return c
+}
+
+func newCancelCtx(parent Context) *cancelCtx {
+	c := &cancelCtx{Context: parent}
+	n := runtime.Callers(2, c.callersAlloc[:]) // skip Callers and newCancelCtx
+	c.callers = c.callersAlloc[:n]
 	return c
 }
 
@@ -421,11 +431,13 @@ func init() {
 type cancelCtx struct {
 	Context
 
-	mu       sync.Mutex            // protects following fields
-	done     atomic.Value          // of chan struct{}, created lazily, closed by first cancel call
-	children map[canceler]struct{} // set to nil by the first cancel call
-	err      error                 // set to non-nil by the first cancel call
-	cause    error                 // set to non-nil by the first cancel call
+	mu           sync.Mutex            // protects following fields
+	done         atomic.Value          // of chan struct{}, created lazily, closed by first cancel call
+	children     map[canceler]struct{} // set to nil by the first cancel call
+	err          error                 // set to non-nil by the first cancel call
+	cause        error                 // set to non-nil by the first cancel call
+	callers      []uintptr             // callers of newCancelCtx
+	callersAlloc [10]uintptr
 }
 
 func (c *cancelCtx) Value(key any) any {
@@ -515,6 +527,26 @@ func (c *cancelCtx) propagateCancel(parent Context, child canceler) {
 	}()
 }
 
+func (c *cancelCtx) callerString() string {
+	if c.callers == nil {
+		return ""
+	}
+	var b strings.Builder
+	frames := runtime.CallersFrames(c.callers)
+	for f, ok := frames.Next(); ok; f, ok = frames.Next() {
+		fmt.Fprintf(&b, "%s:%d %s\n", f.File, f.Line, f.Function)
+	}
+	return b.String()
+}
+
+// Canceler returns a string describing the caller that canceled this context.
+func Canceler(c Context) string {
+	if cc, ok := c.Value(&cancelCtxKey).(*cancelCtx); ok {
+		return cc.callerString()
+	}
+	return ""
+}
+
 type stringer interface {
 	String() string
 }
@@ -529,11 +561,6 @@ func contextName(c Context) string {
 func (c *cancelCtx) String() string {
 	return contextName(c.Context) + ".WithCancel"
 }
-
-var cancelCallback func(Context)
-
-// SetOnCancel sets a function that gets called when Contexts are cancelled.
-func SetOnCancel(f func(Context)) { cancelCallback = f }
 
 // cancel closes c.done, cancels each of c's children, and, if
 // removeFromParent is true, removes c from its parent's children.
@@ -564,9 +591,6 @@ func (c *cancelCtx) cancel(removeFromParent bool, err, cause error) {
 	}
 	c.children = nil
 	c.mu.Unlock()
-	if cancelCallback != nil {
-		cancelCallback(c)
-	}
 
 	if removeFromParent {
 		removeChild(c.Context, c)
@@ -632,7 +656,8 @@ func WithDeadlineCause(parent Context, d time.Time, cause error) (Context, Cance
 		return WithCancel(parent)
 	}
 	c := &timerCtx{
-		deadline: d,
+		cancelCtx: newCancelCtx(parent),
+		deadline:  d,
 	}
 	c.cancelCtx.propagateCancel(parent, c)
 	dur := time.Until(d)
@@ -654,7 +679,7 @@ func WithDeadlineCause(parent Context, d time.Time, cause error) (Context, Cance
 // implement Done and Err. It implements cancel by stopping its timer then
 // delegating to cancelCtx.cancel.
 type timerCtx struct {
-	cancelCtx
+	*cancelCtx
 	timer *time.Timer // Under cancelCtx.mu.
 
 	deadline time.Time
@@ -786,7 +811,7 @@ func value(c Context, key any) any {
 			c = ctx.c
 		case *timerCtx:
 			if key == &cancelCtxKey {
-				return &ctx.cancelCtx
+				return ctx.cancelCtx
 			}
 			c = ctx.Context
 		case backgroundCtx, todoCtx:

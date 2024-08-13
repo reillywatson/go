@@ -534,6 +534,13 @@ func (c *cancelCtx) callerString() string {
 	for f, ok := frames.Next(); ok; f, ok = frames.Next() {
 		b = b + f.File + ":" + itoa(f.Line) + " " + f.Function + "\n"
 	}
+	for parent, _ := parentCancelCtx(c); parent != nil; parent, _ = parentCancelCtx(parent) {
+		b = b + "\nparent:\n"
+		frames := runtime.CallersFrames(parent.callers)
+		for f, ok := frames.Next(); ok; f, ok = frames.Next() {
+			b = b + f.File + ":" + itoa(f.Line) + " " + f.Function + "\n"
+		}
+	}
 	return b
 }
 
